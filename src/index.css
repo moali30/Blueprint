@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #1a2744;
+  --color-navy-light: #243352;
+  --color-gold: #c9a84c;
+  --color-gold-light: #ecd9a0;
+  --font-cairo: "Cairo", sans-serif;
+  --font-inter: "Inter", sans-serif;
+}
+
+/* ─── Base ─────────────────────────────────────────────── */
+html { scroll-behavior: smooth; }
+body { font-family: "Inter", "Cairo", sans-serif; }
+
+/* ─── Custom Scrollbar ────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+/* ─── Wizard Animations ───────────────────────────────── */
+.step-content {
+  animation: fadeSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.step-active-pulse {
+  animation: stepPulse 2s ease-in-out infinite;
+}
+
+@keyframes stepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201, 168, 76, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(201, 168, 76, 0); }
+}
+
+/* ─── Auto-save indicator ─────────────────────────────── */
+.save-flash {
+  animation: saveFlash 1.5s ease-out;
+}
+
+@keyframes saveFlash {
+  0% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0.7; transform: scale(1); }
+}
+
+/* ─── Logo Upload Zone ────────────────────────────────── */
+.logo-zone {
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  background: #fafafa;
+}
+.logo-zone:hover {
+  border-color: var(--color-gold);
+  background: #fefce8;
+}
+.logo-zone.filled {
+  border-style: solid;
+  border-color: #10b981;
+  background: #ecfdf5;
+}
+
+/* ─── Skill Category Colors ───────────────────────────── */
+.skill-ku { border-left: 4px solid #3b82f6; }
+.skill-is { border-left: 4px solid #8b5cf6; }
+.skill-ps { border-left: 4px solid #10b981; }
+
+/* ─── Question Row States ─────────────────────────────── */
+.q-row-complete { background-color: #f0fdf4; }
+.q-row-partial { background-color: #fffbeb; }
+.q-row-error { background-color: #fef2f2; }
+
+/* ─── Tab Active Indicator ────────────────────────────── */
+.tab-active {
+  position: relative;
+}
+.tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--color-gold);
+  border-radius: 2px;
+}
+
+/* ─── Card Hover ──────────────────────────────────────── */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+/* ============================================================ */
+/*                     PRINT STYLES                              */
+/* ============================================================ */
+
+@media print {
+  /* Hide everything except report */
+  body {
+    background: white !important;
+    margin: 0;
+    padding: 0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  /* Report wrapper table - auto-repeat header on each page */
+  .report-wrapper-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .report-wrapper-table > thead {
+    display: table-header-group;
+  }
+
+  .report-wrapper-table > thead > tr > td,
+  .report-wrapper-table > tbody > tr > td {
+    border: none !important;
+    padding: 0;
+  }
+
+  /* Page break utility */
+  .page-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* Inner tables */
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  /* Report area */
+  .report-print-area {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    max-width: none;
+    box-shadow: none;
+    border: none;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm 12mm;
+  }
+}
+
+/* ─── Screen-only Report Preview ──────────────────────── */
+@media screen {
+  .report-print-area {
+    background: white;
+    max-width: 297mm;
+    min-height: 210mm;
+    margin: 0 auto;
+    padding: 12mm 15mm;
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.12),
+      0 1px 2px rgba(0, 0, 0, 0.24),
+      0 25px 50px -12px rgba(0, 0, 0, 0.15);
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+  }
+
+  .page-break {
+    border-top: 2px dashed #d1d5db;
+    margin: 32px 0;
+    padding-top: 16px;
+    position: relative;
+  }
+
+  .page-break::after {
+    content: '📄 صفحة جديدة';
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #f3f4f6;
+    padding: 2px 14px;
+    font-size: 11px;
+    color: #9ca3af;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+}
