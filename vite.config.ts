@@ -5,8 +5,9 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const isGitHubPagesBuild = process.env.GITHUB_ACTIONS === 'true';
   return {
-    base: mode === 'production' ? '/Blueprint/' : '/',
+    base: mode === 'production' && isGitHubPagesBuild ? '/Blueprint/' : '/',
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.MISTRAL_API_KEY': JSON.stringify(env.MISTRAL_API_KEY),
