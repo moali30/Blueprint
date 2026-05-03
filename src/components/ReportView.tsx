@@ -1,5 +1,6 @@
 import React from 'react';
 import type { CourseInfo, Question, Chapter, SkillDef, LogoState } from '../types';
+import { formatQuestionType } from '../questionType';
 
 interface ReportViewProps {
   info: CourseInfo;
@@ -194,7 +195,7 @@ export default function ReportView({ info, questions, chapters, skills, logos }:
                 {questions.map(q => (
                   <tr key={q.id}>
                     <td style={qTdStyle}>{q.id}</td>
-                    <td style={qTdStyle}>{q.type}</td>
+                    <td style={qTdStyle}>{formatQuestionType(q.type, isAr ? 'ar' : 'en')}</td>
                     <td style={{ ...qTdStyle, fontWeight: q.cloKU.length > 0 ? 'bold' : 'normal' }}>
                       {formatCLO(q.cloKU)}
                     </td>

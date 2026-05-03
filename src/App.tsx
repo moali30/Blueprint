@@ -3,12 +3,13 @@ import {
   Printer, Trash2, Plus, AlertTriangle, RefreshCw, Upload as UploadIcon,
   FileText, BookOpen, FileSpreadsheet, X, Check, Loader2,
   Save, Image, Target, HelpCircle,
-  BarChart3, Sparkles, Download
+  BarChart3, Sparkles, Download, Shuffle,
 } from 'lucide-react';
 import { Mistral } from "@mistralai/mistralai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-import type { CourseInfo, Question, Chapter, SkillDef, LogoState } from './types';
+import type { CourseInfo, Question, QuestionType, Chapter, SkillDef, LogoState } from './types';
+import { isObjectiveQuestionType, normalizeQuestionType, formatQuestionType } from './questionType';
 import { INIT_INFO, INIT_LOGOS, SAMPLE_AR, SAMPLE_EN } from './constants';
 import ReportView from './components/ReportView';
 
@@ -60,34 +61,35 @@ export default function App() {
 
   const stats = useMemo(() => {
     const mcq = questions.filter(q => q.type === 'MCQ').length;
+    const tf = questions.filter(q => q.type === 'TF').length;
     const essay = questions.filter(q => q.type === 'Essay').length;
     let ku = 0, is_ = 0, ps = 0;
     questions.forEach(q => { ku += q.cloKU.length; is_ += q.cloIS.length; ps += q.cloPS.length; });
     const maxClo = Math.max(ku, is_, ps);
     const mostCovered = maxClo === 0 ? 'None' : maxClo === ku ? 'K&U' : maxClo === is_ ? 'IS' : 'PS';
-    return { mcq, essay, mostCovered };
+    return { mcq, tf, essay, mostCovered };
   }, [questions]);
 
   const validationReport = useMemo(() => {
-    const mcqs = questions.filter(q => q.type === 'MCQ');
+    const objectives = questions.filter(q => isObjectiveQuestionType(q.type));
     const essays = questions.filter(q => q.type === 'Essay');
-    const totalMcqMarks = mcqs.reduce((s, q) => s + (Number(q.marks) || 0), 0);
+    const totalObjectiveMarks = objectives.reduce((s, q) => s + (Number(q.marks) || 0), 0);
     const totalEssayMarks = essays.reduce((s, q) => s + (Number(q.marks) || 0), 0);
-    const invalidMcqSkills = mcqs.filter(q => (q.cloKU.length + q.cloIS.length + q.cloPS.length) !== 1);
+    const invalidMcqSkills = objectives.filter(q => (q.cloKU.length + q.cloIS.length + q.cloPS.length) !== 1);
     const allUsedSkills = new Set([...questions.flatMap(q => [...q.cloKU, ...q.cloIS, ...q.cloPS])]);
     const uncoveredSkills = skills.filter(s => !allUsedSkills.has(s.code));
     const errors: string[] = [];
-    if (totalMcqMarks !== 35) errors.push(isAr ? `مجموع درجات الاختياري ${totalMcqMarks} (المطلوب 35)` : `MCQ marks sum is ${totalMcqMarks} (Target: 35)`);
+    if (totalObjectiveMarks !== 35) errors.push(isAr ? `مجموع درجات الموضوعي (اختياري + صح/خطأ) ${totalObjectiveMarks} (المطلوب 35)` : `Objective marks (MCQ + True/False) sum is ${totalObjectiveMarks} (Target: 35)`);
     if (totalEssayMarks !== 15) errors.push(isAr ? `مجموع درجات المقالي ${totalEssayMarks} (المطلوب 15)` : `Essay marks sum is ${totalEssayMarks} (Target: 15)`);
     if (invalidMcqSkills.length > 0) {
       const qIds = invalidMcqSkills.map(q => q.id).join('، ');
-      errors.push(isAr ? `يوجد ${invalidMcqSkills.length} أسئلة اختيارية لا تحتوي على مهارة واحدة بالضبط (الأسئلة: ${qIds})` : `${invalidMcqSkills.length} MCQ questions don't have exactly 1 skill (Questions: ${qIds})`);
+      errors.push(isAr ? `يوجد ${invalidMcqSkills.length} أسئلة (اختياري أو صح/خطأ) لا تحتوي على مهارة واحدة بالضبط (الأسئلة: ${qIds})` : `${invalidMcqSkills.length} objective questions (MCQ / True-False) don't have exactly 1 skill (Questions: ${qIds})`);
     }
     if (uncoveredSkills.length > 0) {
       const sCodes = uncoveredSkills.map(s => s.code).join('، ');
       errors.push(isAr ? `يوجد ${uncoveredSkills.length} مهارات غير مغطاة في الأسئلة (المهارات: ${sCodes})` : `${uncoveredSkills.length} skills are not covered by any question (Skills: ${sCodes})`);
     }
-    return { totalMcqMarks, totalEssayMarks, invalidMcqSkills, uncoveredSkills, errors, isValid: errors.length === 0 };
+    return { totalMcqMarks: totalObjectiveMarks, totalEssayMarks, invalidMcqSkills, uncoveredSkills, errors, isValid: errors.length === 0 };
   }, [questions, skills, isAr]);
 
   // ──── Persistence ────────────────────────────────────────
@@ -98,7 +100,7 @@ export default function App() {
         const p = JSON.parse(saved);
         if (p.info) setInfo({ ...INIT_INFO, ...p.info, coordinatorName: p.info.coordinatorName || '' });
         if (p.skills) setSkills(p.skills);
-        if (p.questions) setQuestions(p.questions);
+        if (p.questions) setQuestions(p.questions.map((q: Question) => ({ ...q, type: normalizeQuestionType((q as Question).type) })));
         if (p.chapters) setChapters(p.chapters);
         if (p.logos) setLogos(p.logos);
         setNumQuestions(p.questions?.length || 37);
@@ -151,9 +153,9 @@ export default function App() {
     return `${prefix}${index + 1}`;
   };
 
-  const handleTypeChange = (idx: number, newType: 'MCQ' | 'Essay') => {
+  const handleTypeChange = (idx: number, newType: QuestionType) => {
     const q = questions[idx]; const n = [...questions];
-    if (newType === 'MCQ') {
+    if (newType === 'MCQ' || newType === 'TF') {
       let kept = false;
       const cloKU = q.cloKU.length > 0 && !kept ? (kept = true, [q.cloKU[0]]) : [];
       const cloIS = q.cloIS.length > 0 && !kept ? (kept = true, [q.cloIS[0]]) : [];
@@ -162,6 +164,117 @@ export default function App() {
     } else { n[idx] = { ...q, type: newType }; }
     setQuestions(n);
   };
+
+  /** Shuffle array in place (Fisher–Yates). */
+  const shuffleArray = useCallback(<T,>(arr: T[]) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }, []);
+
+  const buildSkillEntries = useCallback((): { code: string; category: 'KU' | 'IS' | 'PS' }[] => {
+    const rows: { code: string; category: 'KU' | 'IS' | 'PS' }[] = [];
+    (['KU', 'IS', 'PS'] as const).forEach(cat => {
+      const list = skills.filter(s => s.category === cat);
+      list.forEach((s, idx) => rows.push({ code: getSkillCode(cat, idx, info.language, s), category: cat }));
+    });
+    return rows;
+  }, [skills, info.language]);
+
+  const assignMcqSkill = useCallback((q: Question, code: string, category: 'KU' | 'IS' | 'PS'): Question => ({
+    ...q,
+    cloKU: category === 'KU' ? [code] : [],
+    cloIS: category === 'IS' ? [code] : [],
+    cloPS: category === 'PS' ? [code] : [],
+  }), []);
+
+  const addEssaySkill = useCallback((q: Question, code: string, category: 'KU' | 'IS' | 'PS'): Question => {
+    const key = category === 'KU' ? 'cloKU' : category === 'IS' ? 'cloIS' : 'cloPS';
+    const arr = [...(q[key] as string[])];
+    if (!arr.includes(code)) arr.push(code);
+    return { ...q, [key]: arr };
+  }, []);
+
+  /**
+   * يوزّع كل المهارات على الأسئلة عشوائياً مع:
+   * - سؤال اختياري = مهارة واحدة تماماً (في عمود نوعها)
+   * - كل مهارة تظهر مرة واحدة على الأقل
+   * - تأثير بشري: تكتّلات بسيطة لنفس المهارة بين أسئلة MCQ متتالية
+   */
+  const randomDistributeSkills = useCallback(() => {
+    if (skills.length === 0) {
+      window.alert(isAr ? 'أضف مهارات أولاً قبل التوزيع.' : 'Define skills before distributing.');
+      return;
+    }
+    if (questions.length === 0) {
+      window.alert(isAr ? 'أنشئ جدول الأسئلة أولاً.' : 'Generate the questions matrix first.');
+      return;
+    }
+    const mcqIdx = questions.map((_, i) => i).filter(i => isObjectiveQuestionType(questions[i].type));
+    const essayIdx = questions.map((_, i) => i).filter(i => questions[i].type === 'Essay');
+    const needEssaySlots = skills.length > mcqIdx.length;
+    if (needEssaySlots && essayIdx.length === 0) {
+      window.alert(isAr
+        ? `عدد المهارات (${skills.length}) أكبر من عدد أسئلة الموضوعي (${mcqIdx.length}). أضف أسئلة مقالية لاستيعاب المهارات الزائدة.`
+        : `You have ${skills.length} skills but only ${mcqIdx.length} objective question slots (MCQ / True-False). Add Essay rows — each objective item allows exactly one CLO.`);
+      return;
+    }
+
+    const skillEntries = buildSkillEntries();
+    const shuffledMandatory = [...skillEntries];
+    shuffleArray(shuffledMandatory);
+
+    let pool = [...mcqIdx];
+    shuffleArray(pool);
+
+    let next = questions.map(q => ({ ...q, cloKU: [] as string[], cloIS: [] as string[], cloPS: [] as string[] }));
+
+    const pickEssayIdx = (): number => essayIdx[Math.floor(Math.random() * essayIdx.length)];
+
+    for (const row of shuffledMandatory) {
+      if (pool.length > 0) {
+        const pick = Math.floor(Math.random() * pool.length);
+        const qIdx = pool[pick];
+        pool.splice(pick, 1);
+        next[qIdx] = assignMcqSkill(next[qIdx], row.code, row.category);
+      } else {
+        const ei = pickEssayIdx();
+        next[ei] = addEssaySkill(next[ei], row.code, row.category);
+      }
+    }
+
+    /** ترتيب الأسئلة الاختيارية غير المعبّأة لتكتّلات بشرية على التسلسل الرقمي */
+    const leftoverMcqs = pool.slice().sort((a, b) => questions[a].id - questions[b].id);
+    const allChoices = [...skillEntries];
+    let prev: { code: string; category: 'KU' | 'IS' | 'PS' } | null = null;
+
+    for (const qIdx of leftoverMcqs) {
+      let pickRow: { code: string; category: 'KU' | 'IS' | 'PS' };
+      const streakRoll = Math.random();
+      if (prev && streakRoll < 0.28) pickRow = prev;
+      else pickRow = allChoices[Math.floor(Math.random() * allChoices.length)]!;
+      prev = pickRow;
+      next[qIdx] = assignMcqSkill(next[qIdx], pickRow.code, pickRow.category);
+    }
+
+    /** بعض المقالات الفارغة: دمج مهارات لتبدو أكثر واقعية */
+    const emptyEssays = essayIdx.filter(i => {
+      const q = next[i];
+      return q.cloKU.length + q.cloIS.length + q.cloPS.length === 0;
+    });
+    shuffleArray(emptyEssays);
+    const spreadN = Math.max(2, Math.min(5, Math.ceil(skillEntries.length / Math.max(emptyEssays.length, 1))));
+    emptyEssays.forEach(ei => {
+      const picks = shuffleArray(skillEntries.slice()).slice(0, spreadN);
+      let q = next[ei];
+      for (const p of picks) q = addEssaySkill(q, p.code, p.category);
+      next[ei] = q;
+    });
+
+    setQuestions(next);
+  }, [questions, skills, isAr, buildSkillEntries, shuffleArray, assignMcqSkill, addEssaySkill]);
 
   // ──── Logo Upload ────────────────────────────────────────
   const handleLogoUpload = (slot: 'leftLogo' | 'centerSeal' | 'rightLogo', file: File) => {
@@ -186,8 +299,8 @@ export default function App() {
       const mistralApiKey = (import.meta as any).env.VITE_MISTRAL_API_KEY || "EIzqjOk3aGZK5bAaRZ6oTpmYmNzoWgSc";
       const client = new Mistral({ apiKey: mistralApiKey });
 
-      const prompt = `Extract all the blueprint data from this document.\n\nCRITICAL: Extract CLO codes EXACTLY as they appear in the document.\n- English docs use: a1, a2, b1, b2, c1, c2, etc.\n- Arabic docs use: أ1, أ2, ب1, ب2, ج1, ج2, etc.\n\nCategory mapping:\n- "a" or "أ" → "KU"\n- "b" or "ب" → "IS"\n- "c" or "ج" → "PS"\n\nONLY extract CLOs with codes starting with a/أ, b/ب, or c/ج. SKIP d/د codes.\n\nFor the questions matrix, extract the EXACT CLO codes assigned to each question.\n\nAlso extract: course info, chapters with hours/marks/question coverage.`;
-      const schemaDescription = `Respond STRICTLY with a JSON object matching this structure:\n{\n  "detectedLanguage": "'ar' for Arabic, 'en' for English",\n  "info": {\n    "programName": "",\n    "department": "",\n    "courseTitle": "",\n    "courseCode": "",\n    "level": "",\n    "totalHours": 0,\n    "totalMarks": 0\n  },\n  "skills": [\n    {\n      "code": "The EXACT CLO code from the document",\n      "category": "'KU', 'IS', or 'PS'",\n      "formula": ""\n    }\n  ],\n  "questions": [\n    {\n      "type": "'MCQ' or 'Essay'",\n      "formula": "",\n      "cloKU": [],\n      "cloIS": [],\n      "cloPS": []\n    }\n  ],\n  "chapters": [\n    {\n      "title": "",\n      "questionsCovered": "",\n      "hours": 0,\n      "marks": 0\n    }\n  ]\n}`;
+      const prompt = `Extract all the blueprint data from this document.\n\nCRITICAL: Extract CLO codes EXACTLY as they appear in the document.\n- English docs use: a1, a2, b1, b2, c1, c2, etc.\n- Arabic docs use: أ1, أ2, ب1, ب2, ج1, ج2, etc.\n\nCategory mapping:\n- "a" or "أ" → "KU"\n- "b" or "ب" → "IS"\n- "c" or "ج" → "PS"\n\nONLY extract CLOs with codes starting with a/أ, b/ب, or c/ج. SKIP d/د codes.\n\nFor the questions matrix, extract the EXACT CLO codes assigned to each question. For question type field use exactly one of:\n- "MCQ" for multiple-choice\n- "TF" for True/False items (Arabic headings like صح/خطأ)\n- "Essay" for essays\n\nAlso extract: course info, chapters with hours/marks/question coverage.`;
+      const schemaDescription = `Respond STRICTLY with a JSON object matching this structure:\n{\n  "detectedLanguage": "'ar' for Arabic, 'en' for English",\n  "info": {\n    "programName": "",\n    "department": "",\n    "courseTitle": "",\n    "courseCode": "",\n    "level": "",\n    "totalHours": 0,\n    "totalMarks": 0\n  },\n  "skills": [\n    {\n      "code": "The EXACT CLO code from the document",\n      "category": "'KU', 'IS', or 'PS'",\n      "formula": ""\n    }\n  ],\n  "questions": [\n    {\n      "type": "'MCQ', 'Essay', or 'TF'. Use 'TF' for True/False (English) or صح/خطأ (Arabic).",\n      "formula": "",\n      "cloKU": [],\n      "cloIS": [],\n      "cloPS": []\n    }\n  ],\n  "chapters": [\n    {\n      "title": "",\n      "questionsCovered": "",\n      "hours": 0,\n      "marks": 0\n    }\n  ]\n}`;
 
       let retries = 2; let parsedResult: any = {};
       while (retries >= 0) {
@@ -218,6 +331,7 @@ export default function App() {
           }
           if (parsedResult.questions) {
              parsedResult.questions.forEach((q: any) => {
+                if (q.type != null && String(q.type).trim() !== '') q.type = normalizeQuestionType(q.type);
                 if (q.cloKU) q.cloKU = q.cloKU.map((c: any) => String(c).toLowerCase());
                 if (q.cloIS) q.cloIS = q.cloIS.map((c: any) => String(c).toLowerCase());
                 if (q.cloPS) q.cloPS = q.cloPS.map((c: any) => String(c).toLowerCase());
@@ -283,9 +397,11 @@ export default function App() {
         const existing = questions[i]; const q = aiResult.questions[i];
         if (!q) return existing;
         const cnt = (Array.isArray(q.cloKU) ? q.cloKU.length : 0) + (Array.isArray(q.cloIS) ? q.cloIS.length : 0) + (Array.isArray(q.cloPS) ? q.cloPS.length : 0);
-        if (q.type === 'MCQ' && cnt > 1) warnings.push(`السؤال رقم ${i + 1} يحتوي على أكثر من مهارة.`);
-        if (!existing) return { id: i + 1, type: (q.type === 'Essay' ? 'Essay' : 'MCQ') as 'MCQ' | 'Essay', formula: '', cloKU: Array.isArray(q.cloKU) ? q.cloKU : [], cloIS: Array.isArray(q.cloIS) ? q.cloIS : [], cloPS: Array.isArray(q.cloPS) ? q.cloPS : [], marks: 1 };
-        return { ...existing, type: q.type || existing.type, formula: existing.formula || '', marks: existing.marks || 1, cloKU: q.cloKU?.length > 0 ? q.cloKU : existing.cloKU, cloIS: q.cloIS?.length > 0 ? q.cloIS : existing.cloIS, cloPS: q.cloPS?.length > 0 ? q.cloPS : existing.cloPS };
+        const nType = normalizeQuestionType(q.type);
+        if (isObjectiveQuestionType(nType) && cnt > 1) warnings.push(`السؤال رقم ${i + 1} يحتوي على أكثر من مهارة.`);
+        if (!existing) return { id: i + 1, type: nType, formula: '', cloKU: Array.isArray(q.cloKU) ? q.cloKU : [], cloIS: Array.isArray(q.cloIS) ? q.cloIS : [], cloPS: Array.isArray(q.cloPS) ? q.cloPS : [], marks: 1 };
+        const mergedType = q.type !== undefined && q.type !== null && String(q.type).trim() !== '' ? nType : existing.type;
+        return { ...existing, type: mergedType, formula: existing.formula || '', marks: existing.marks || 1, cloKU: q.cloKU?.length > 0 ? q.cloKU : existing.cloKU, cloIS: q.cloIS?.length > 0 ? q.cloIS : existing.cloIS, cloPS: q.cloPS?.length > 0 ? q.cloPS : existing.cloPS };
       });
       if (warnings.length > 0) { setConflictMessages(p => [...p, ...warnings]); setConflictMode(true); }
       setQuestions(nq); setNumQuestions(nq.length);
@@ -320,7 +436,7 @@ export default function App() {
     try {
       const genAI = new GoogleGenerativeAI((import.meta as any).env.VITE_GEMMA_API_KEY || "AIzaSyBk28b61Ggmb7SvWK2n4ZoXIvC11Yk5fFg");
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const prompt = `You are a Smart Blueprint Assistant for a University course.\nTask: Map each exam question to the most relevant Chapter and the most relevant Skills (CLOs).\n\nChapters:\n${JSON.stringify(chapters.map(c => ({ id: c.id, title: c.title })))}\n\nSkills/CLOs:\n${JSON.stringify(skills.map(s => ({ code: s.code, category: s.category, formula: s.formula })))}\n\nQuestions:\n${JSON.stringify(questions.map(q => ({ id: q.id, type: q.type, formula: q.formula })))}\n\nLogic:\n1. Every question MUST be mapped to exactly ONE chapterId.\n2. Every question MUST be mapped to AT LEAST ONE Skill code.\n3. Organize the skill codes into cloKU, cloIS, and cloPS correctly.\n\nResponse MUST be a clean JSON array of objects:\n[{ "id": 1, "chapterId": 12345, "cloKU": ["a1"], "cloIS": [], "cloPS": [] }]`;
+      const prompt = `You are a Smart Blueprint Assistant for a University course.\nTask: Map each exam question to the most relevant Chapter and the most relevant Skills (CLOs).\n\nChapters:\n${JSON.stringify(chapters.map(c => ({ id: c.id, title: c.title })))}\n\nSkills/CLOs:\n${JSON.stringify(skills.map(s => ({ code: s.code, category: s.category, formula: s.formula })))}\n\nQuestions:\n${JSON.stringify(questions.map(q => ({ id: q.id, type: q.type, formula: q.formula })))}\n\nLogic:\n1. Every question MUST be mapped to exactly ONE chapterId.\n2. Every question MUST be mapped to AT LEAST ONE Skill code.\n3. Organize the skill codes into cloKU, cloIS, and cloPS correctly.\n4. Questions of type MCQ or TF MUST have exactly ONE CLO total (in the matching cloKU / cloIS / cloPS field). Essay may have multiple CLOs.\n\nResponse MUST be a clean JSON array of objects:\n[{ "id": 1, "chapterId": 12345, "cloKU": ["a1"], "cloIS": [], "cloPS": [] }]`;
       const chatResp = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } });
       const mappings = JSON.parse(chatResp.response.text() || "[]");
       setSmartAuditQuestions(questions.map(q => {
@@ -364,7 +480,7 @@ export default function App() {
     const q = questions[qIdx];
     const available = skills.filter(s => s.category === category).map((s, idx) => getSkillCode(category, idx, info.language, s));
     const selected = category === 'KU' ? q.cloKU : category === 'IS' ? q.cloIS : q.cloPS;
-    if (q.type === 'MCQ') {
+    if (isObjectiveQuestionType(q.type)) {
       return (
         <select className="w-full p-1 bg-transparent outline-none text-center text-xs" value={selected[0] || ''} onChange={e => {
           const val = e.target.value; const n = [...questions];
@@ -408,7 +524,7 @@ export default function App() {
           <div><h4 className="font-bold text-navy mb-2 border-b pb-1 text-base">{isAr ? 'الفصول' : 'Chapters'} ({aiResult.chapters.length})</h4><div className="overflow-x-auto"><table className="w-full border-collapse border border-gray-200 text-xs"><thead><tr className="bg-gray-100"><th className="border p-2">Title</th><th className="border p-2 w-16">Hours</th><th className="border p-2 w-16">Marks</th><th className="border p-2 w-28">Questions</th></tr></thead><tbody>{aiResult.chapters.map((c: any, i: number) => <tr key={i}><td className="border p-2" dir="auto">{c.title}</td><td className="border p-2 text-center">{c.hours ?? '-'}</td><td className="border p-2 text-center">{c.marks ?? '-'}</td><td className="border p-2 text-center" dir="auto">{c.questionsCovered || '-'}</td></tr>)}</tbody></table></div></div>
         )}
         {aiResult.questions?.length > 0 && (
-          <div><h4 className="font-bold text-navy mb-2 border-b pb-1 text-base">{isAr ? 'الأسئلة' : 'Questions'} ({aiResult.questions.length})</h4><div className="max-h-72 overflow-y-auto border rounded-lg"><table className="w-full border-collapse text-xs"><thead className="sticky top-0 bg-gray-100"><tr><th className="border p-2 w-10">#</th><th className="border p-2 w-16">Type</th><th className="border p-2">Formula</th><th className="border p-2 w-16">KU</th><th className="border p-2 w-16">IS</th><th className="border p-2 w-16">PS</th></tr></thead><tbody>{aiResult.questions.map((q: any, i: number) => <tr key={i}><td className="border p-2 text-center">{i + 1}</td><td className="border p-2 text-center">{q.type}</td><td className="border p-2" dir="auto">{q.formula || <span className="text-gray-400 italic">N/A</span>}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloKU?.join(', ') || '-'}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloIS?.join(', ') || '-'}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloPS?.join(', ') || '-'}</td></tr>)}</tbody></table></div></div>
+          <div><h4 className="font-bold text-navy mb-2 border-b pb-1 text-base">{isAr ? 'الأسئلة' : 'Questions'} ({aiResult.questions.length})</h4><div className="max-h-72 overflow-y-auto border rounded-lg"><table className="w-full border-collapse text-xs"><thead className="sticky top-0 bg-gray-100"><tr><th className="border p-2 w-10">#</th><th className="border p-2 w-16">Type</th><th className="border p-2">Formula</th><th className="border p-2 w-16">KU</th><th className="border p-2 w-16">IS</th><th className="border p-2 w-16">PS</th></tr></thead><tbody>{aiResult.questions.map((q: any, i: number) => <tr key={i}><td className="border p-2 text-center">{i + 1}</td><td className="border p-2 text-center">{formatQuestionType(normalizeQuestionType(q.type), isAr ? 'ar' : 'en')}</td><td className="border p-2" dir="auto">{q.formula || <span className="text-gray-400 italic">N/A</span>}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloKU?.join(', ') || '-'}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloIS?.join(', ') || '-'}</td><td className="border p-2 text-center font-bold" dir="auto">{q.cloPS?.join(', ') || '-'}</td></tr>)}</tbody></table></div></div>
         )}
       </div>
     );
@@ -605,6 +721,7 @@ export default function App() {
             badge={questions.length > 0 ? (
               <div className="flex gap-2 text-xs font-bold">
                 <span className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-full">MCQ: {stats.mcq}</span>
+                <span className="bg-teal-50 text-teal-800 px-3 py-1.5 rounded-full">{isAr ? 'ص/خ' : 'T/F'}: {stats.tf}</span>
                 <span className="bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full">Essay: {stats.essay}</span>
               </div>
             ) : undefined}
@@ -618,6 +735,7 @@ export default function App() {
                   <input type="number" className="w-28 p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-gold/50 outline-none text-center font-bold" value={numQuestions} onChange={e => setNumQuestions(Number(e.target.value))} />
                 </div>
                 <button onClick={generateQuestions} className="bg-navy text-white px-5 py-2 rounded-lg font-bold hover:bg-opacity-90 transition text-sm shadow-sm">{isAr ? 'إنشاء الجدول' : 'Generate'}</button>
+                <button type="button" onClick={randomDistributeSkills} className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2 rounded-lg font-bold hover:bg-emerald-700 transition text-sm shadow-sm" title={isAr ? 'يوزّع المهارات مع احترام القواعد (اختياري / صح-خطأ = مهارة واحدة).' : 'Assign all CLOs: 1 skill per MCQ / True-False.'}><Shuffle size={18} />{isAr ? 'توزيع عشوائي للمهارات' : 'Shuffle skills (human-like)'}</button>
               </div>
 
               {/* Table */}
@@ -637,13 +755,15 @@ export default function App() {
                     <tbody className="divide-y divide-gray-100">
                       {questions.map((q, idx) => {
                         const skillCount = q.cloKU.length + q.cloIS.length + q.cloPS.length;
-                        const rowCls = q.type === 'MCQ' && skillCount !== 1 ? 'q-row-error' : skillCount > 0 ? 'q-row-complete' : 'q-row-partial';
+                        const rowCls = isObjectiveQuestionType(q.type) && skillCount !== 1 ? 'q-row-error' : skillCount > 0 ? 'q-row-complete' : 'q-row-partial';
                         return (
                           <tr key={q.id} className={`${rowCls} hover:bg-gray-50/80 transition-colors`}>
                             <td className="p-2 text-center font-bold text-gray-500 border-r border-gray-100">{q.id}</td>
                             <td className="p-2 border-r border-gray-100">
-                              <select className="w-full p-1 bg-transparent outline-none text-xs font-semibold text-center" value={q.type} onChange={e => handleTypeChange(idx, e.target.value as 'MCQ' | 'Essay')}>
-                                <option value="MCQ">MCQ</option><option value="Essay">Essay</option>
+                              <select className="w-full p-1 bg-transparent outline-none text-xs font-semibold text-center" value={q.type} onChange={e => handleTypeChange(idx, e.target.value as QuestionType)}>
+                                <option value="MCQ">MCQ</option>
+                                <option value="TF">{isAr ? 'صح/خطأ' : 'True/False'}</option>
+                                <option value="Essay">{isAr ? 'مقالي' : 'Essay'}</option>
                               </select>
                             </td>
                             <td className="p-2 border-r border-gray-100"><textarea className="w-full p-1 bg-transparent outline-none resize-y min-h-[32px] text-xs" value={q.formula || ''} onChange={e => updateQ(idx, 'formula', e.target.value)} placeholder={isAr ? 'صيغة...' : 'Formula...'} /></td>
@@ -855,11 +975,12 @@ export default function App() {
                     <tbody className="divide-y divide-gray-100">
                       {smartAuditQuestions.map((sq, idx) => {
                         const cnt = (sq.cloKU?.length || 0) + (sq.cloIS?.length || 0) + (sq.cloPS?.length || 0);
-                        const invalid = sq.type === 'MCQ' && cnt !== 1;
+                        const invalid = isObjectiveQuestionType(sq.type) && cnt !== 1;
+                        const typeBadgeCls = sq.type === 'MCQ' ? 'bg-blue-100 text-blue-800' : sq.type === 'TF' ? 'bg-teal-100 text-teal-900' : 'bg-purple-100 text-purple-800';
                         return (
                           <tr key={sq.id} className={invalid ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-blue-50'}>
                             <td className="p-2 border-r text-center font-bold bg-gray-50">{sq.id}</td>
-                            <td className="p-2 border-r text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${sq.type === 'MCQ' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}`}>{sq.type}</span>{invalid && <div className="text-[8px] text-red-600 font-bold mt-0.5">{isAr ? 'خطأ' : 'ERR'}</div>}</td>
+                            <td className="p-2 border-r text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${typeBadgeCls}`}>{formatQuestionType(sq.type, isAr ? 'ar' : 'en')}</span>{invalid && <div className="text-[8px] text-red-600 font-bold mt-0.5">{isAr ? 'خطأ' : 'ERR'}</div>}</td>
                             <td className="p-2 border-r"><div className="max-h-[50px] overflow-y-auto text-xs text-gray-700 font-semibold">{sq.formula || '-'}</div></td>
                             <td className="p-2 border-r text-center"><input type="number" min="0" step="0.5" className="w-14 border rounded p-1 text-center text-xs font-bold text-navy outline-none focus:border-navy" value={sq.marks ?? 1} onChange={e => { const n = [...smartAuditQuestions]; n[idx].marks = Number(e.target.value); setSmartAuditQuestions(n); }} /></td>
                             <td className="p-2 border-r"><select className="w-full border bg-white rounded p-1 text-[10px] font-bold text-navy outline-none" value={sq.predictedChapterId || ''} onChange={e => { const n = [...smartAuditQuestions]; n[idx].predictedChapterId = Number(e.target.value); setSmartAuditQuestions(n); }}><option value="">{isAr ? 'غير محدد' : 'Not Set'}</option>{chapters.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}</select></td>
@@ -877,7 +998,7 @@ export default function App() {
             {!smartAuditLoading && !smartAuditError && (
               <div className="p-4 bg-white border-t flex flex-col md:flex-row justify-between items-center gap-4 shrink-0 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
                 <div className="flex gap-4 text-xs font-bold">
-                  <span className={smartAuditQuestions.filter(sq => sq.type === 'MCQ').reduce((s, q) => s + (Number(q.marks) || 0), 0) === 35 ? 'text-emerald-600' : 'text-red-500'}>MCQ: {smartAuditQuestions.filter(sq => sq.type === 'MCQ').reduce((s, q) => s + (Number(q.marks) || 0), 0)} / 35</span>
+                  <span className={smartAuditQuestions.filter(sq => isObjectiveQuestionType(sq.type)).reduce((s, q) => s + (Number(q.marks) || 0), 0) === 35 ? 'text-emerald-600' : 'text-red-500'}>{isAr ? 'موضوعي (اختياري + ص/خ)' : 'Objective (MCQ+T/F)'}: {smartAuditQuestions.filter(sq => isObjectiveQuestionType(sq.type)).reduce((s, q) => s + (Number(q.marks) || 0), 0)} / 35</span>
                   <span className={smartAuditQuestions.filter(sq => sq.type === 'Essay').reduce((s, q) => s + (Number(q.marks) || 0), 0) === 15 ? 'text-emerald-600' : 'text-red-500'}>Essay: {smartAuditQuestions.filter(sq => sq.type === 'Essay').reduce((s, q) => s + (Number(q.marks) || 0), 0)} / 15</span>
                 </div>
                 <div className="flex gap-3">

@@ -15,9 +15,11 @@ export interface CourseInfo {
   coordinatorName: string;
 }
 
+export type QuestionType = 'MCQ' | 'TF' | 'Essay';
+
 export interface Question {
   id: number;
-  type: 'MCQ' | 'Essay';
+  type: QuestionType;
   cloKU: string[];
   cloIS: string[];
   cloPS: string[];

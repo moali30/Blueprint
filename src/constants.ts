@@ -1,4 +1,4 @@
-import type { CourseInfo, LogoState } from './types';
+import type { CourseInfo, LogoState, QuestionType } from './types';
 
 export const INIT_INFO: CourseInfo = {
   programName: '', department: '', courseTitle: '', courseCode: '',
@@ -104,7 +104,7 @@ export const SAMPLE_EN = {
       { ku: [], is: ['B4'], ps: [] },        // Q34
       { ku: [], is: [], ps: ['C1'] },        // Q35
     ];
-    const questions: { id: number; type: 'MCQ' | 'Essay'; cloKU: string[]; cloIS: string[]; cloPS: string[]; formula: string; marks: number }[] = mapping.map((m, i) => ({
+    const questions: { id: number; type: QuestionType; cloKU: string[]; cloIS: string[]; cloPS: string[]; formula: string; marks: number }[] = mapping.map((m, i) => ({
       id: i + 1, type: 'MCQ' as const,
       cloKU: m.ku, cloIS: m.is, cloPS: m.ps, formula: '', marks: 1
     }));
